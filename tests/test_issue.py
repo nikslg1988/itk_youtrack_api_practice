@@ -2,13 +2,14 @@ from uuid import uuid4
 
 import pytest
 
+from client.endpoints import YouTrackEndpoints
 from client.youtrack_client import YouTrackClient
 from schemas.issue import Issue, IssueItem
 
 
 def test_get_issues(youtrack_client: YouTrackClient):
     response = youtrack_client.get(
-        "/api/issues",
+        YouTrackEndpoints.ISSUES,
         params={
             "fields": "id,idReadable,summary,project(name)",
             "$top": 5,
@@ -24,32 +25,68 @@ def test_get_issues(youtrack_client: YouTrackClient):
 
 
 def test_get_issue_by_id(youtrack_client: YouTrackClient):
-    response = youtrack_client.get(
-        "api/issues/3-88",
-        params={
-            "fields": "id,idReadable,summary,project(id,name)",
-        },
-    )
+    summary = f"API automation test {uuid4()}"
+    # Инициализируем ID заранее, чтобы finally мог проверить, была ли создана задача
+    issue_id = None
 
-    assert response.status_code == 200
+    try:
+        create_response = youtrack_client.post(
+            YouTrackEndpoints.ISSUES,
+            json={
+                "summary": summary,
+                "description": "Issue created using YouTrack REST API",
+                "project": {"id": "0-0"},
+            },
+            params={"fields": "id,idReadable,summary,description,project(id,name)"},
+        )
 
-    issue_data = response.json()
-    issue = Issue.model_validate(issue_data)
+        assert create_response.status_code == 200
 
-    assert issue.id == "3-88"
-    assert issue.id_readable == "DEMO-46"
-    assert issue.summary == "Playwright test issue 9f0a1776-a9dc-43f7-b45a-4d98c38a57cd"
-    assert issue.project.id == "0-0"
-    assert issue.project.name == "Demo project"
+        issue_data = create_response.json()
+        issue_id = issue_data["id"]
+
+        created_issue = Issue.model_validate(issue_data)
+
+        assert created_issue.summary == summary
+        assert created_issue.project.id == "0-0"
+
+        get_response = youtrack_client.get(
+            YouTrackEndpoints.issue(issue_id),
+            params={
+                "fields": "id,idReadable,summary,description,project(id,name)",
+            },
+        )
+
+        assert get_response.status_code == 200
+
+        issue = Issue.model_validate(get_response.json())
+
+        assert issue.id == issue_id
+        assert issue.id_readable == created_issue.id_readable
+        assert issue.summary == summary
+        assert issue.description == "Issue created using YouTrack REST API"
+        assert issue.project.id == "0-0"
+        assert issue.project.name == "Demo project"
+
+    finally:
+        if issue_id is not None:
+            delete_response = youtrack_client.delete(YouTrackEndpoints.issue(issue_id))
+
+            assert delete_response.status_code == 200
+
+            check_deleted = youtrack_client.get(YouTrackEndpoints.issue(issue_id))
+
+            assert check_deleted.status_code == 404
 
 
 def test_create_issue(youtrack_client):
     summary = f"API automation test {uuid4()}"
+    # Инициализируем ID заранее, чтобы finally мог проверить, была ли создана задача
     issue_id = None
 
     try:
         response = youtrack_client.post(
-            "/api/issues",
+            YouTrackEndpoints.ISSUES,
             json={
                 "summary": summary,
                 "description": "Issue created using YouTrack REST API",
@@ -60,6 +97,7 @@ def test_create_issue(youtrack_client):
 
         assert response.status_code == 200
         issue_data = response.json()
+        issue_id = issue_data["id"]
         issue = Issue.model_validate(issue_data)
         assert issue.summary == summary
         assert issue.description == "Issue created using YouTrack REST API"
@@ -67,7 +105,7 @@ def test_create_issue(youtrack_client):
         assert issue.project.name == "Demo project"
 
         get_test_issue = youtrack_client.get(
-            f"api/issues/{issue.id}",
+            YouTrackEndpoints.issue(issue.id),
             params={"fields": "id,idReadable,summary,description,project(id,name)"},
         )
         assert get_test_issue.status_code == 200
@@ -82,41 +120,50 @@ def test_create_issue(youtrack_client):
         assert get_issue.project.name == issue.project.name
     finally:
         if issue_id is not None:
-            delete_response = youtrack_client.delete(f"/api/issues/{issue_id}")
+            delete_response = youtrack_client.delete(YouTrackEndpoints.issue(issue_id))
             assert delete_response.status_code == 200
 
-            deleted_issue_response = youtrack_client.get(f"/api/issues/{issue_id}")
+            deleted_issue_response = youtrack_client.get(
+                YouTrackEndpoints.issue(issue_id)
+            )
             assert deleted_issue_response.status_code == 404
 
 
 def test_update_issue(youtrack_client):
     summary = f"API automation test {uuid4()}"
+    # Инициализируем ID заранее, чтобы finally мог проверить, была ли создана задача
+    issue_id = None
 
-    response = youtrack_client.post(
-        "/api/issues",
-        json={
-            "summary": summary,
-            "description": "Issue created using YouTrack REST API",
-            "project": {"id": "0-0"},
-        },
-        params={"fields": "id,idReadable,summary,description,project(id,name)"},
-    )
-
-    assert response.status_code == 200
-    issue_data = response.json()
-    issue = Issue.model_validate(issue_data)
-    assert issue.summary == summary
-    assert issue.description == "Issue created using YouTrack REST API"
     try:
+        response = youtrack_client.post(
+            YouTrackEndpoints.ISSUES,
+            json={
+                "summary": summary,
+                "description": "Issue created using YouTrack REST API",
+                "project": {"id": "0-0"},
+            },
+            params={"fields": "id,idReadable,summary,description,project(id,name)"},
+        )
+
+        assert response.status_code == 200
+
+        issue_data = response.json()
+        issue_id = issue_data["id"]
+        issue = Issue.model_validate(issue_data)
+
+        assert issue.summary == summary
+        assert issue.description == "Issue created using YouTrack REST API"
+
         update_response = youtrack_client.post(
-            f"/api/issues/{issue.id}",
+            YouTrackEndpoints.issue(issue_id),
             json={"summary": "API update test"},
             params={"fields": "id,idReadable,summary"},
         )
 
         assert update_response.status_code == 200
+
         get_response = youtrack_client.get(
-            f"/api/issues/{issue.id}",
+            YouTrackEndpoints.issue(issue_id),
             params={"fields": "id,idReadable,summary,description,project(id,name)"},
         )
 
@@ -126,13 +173,14 @@ def test_update_issue(youtrack_client):
         assert updated_issue.summary == "API update test"
 
     finally:
-        delete_response = youtrack_client.delete(f"/api/issues/{issue.id}")
+        if issue_id is not None:
+            delete_response = youtrack_client.delete(YouTrackEndpoints.issue(issue_id))
 
-        assert delete_response.status_code == 200
+            assert delete_response.status_code == 200
 
-        check_deleted = youtrack_client.get(f"/api/issues/{issue.id}")
+            check_deleted = youtrack_client.get(YouTrackEndpoints.issue(issue_id))
 
-        assert check_deleted.status_code == 404
+            assert check_deleted.status_code == 404
 
 
 def test_add_comment(youtrack_client):
@@ -140,7 +188,7 @@ def test_add_comment(youtrack_client):
     summary = f"API automation test {uuid4()}"
 
     response = youtrack_client.post(
-        "/api/issues",
+        YouTrackEndpoints.ISSUES,
         json={
             "summary": summary,
             "description": "Issue created using YouTrack REST API",
@@ -156,29 +204,29 @@ def test_add_comment(youtrack_client):
         assert issue.summary == summary
         assert issue.project.id == "0-0"
         comment_post = youtrack_client.post(
-            f"/api/issues/{issue.id}/comments",
+            YouTrackEndpoints.issue_comments(issue.id),
             json={"text": test_comment},
             params={"fields": "id,text"},
         )
         assert comment_post.status_code == 200
         comment_get = youtrack_client.get(
-            f"/api/issues/{issue.id}/comments",
+            YouTrackEndpoints.issue_comments(issue.id),
             params={"fields": "id,text"},
         )
         assert comment_get.status_code == 200
         comments = comment_get.json()
         assert any(comment["text"] == test_comment for comment in comments)
     finally:
-        delete_response = youtrack_client.delete(f"/api/issues/{issue.id}")
+        delete_response = youtrack_client.delete(YouTrackEndpoints.issue(issue.id))
         assert delete_response.status_code == 200
 
-        check_deleted = youtrack_client.get(f"/api/issues/{issue.id}")
+        check_deleted = youtrack_client.get(YouTrackEndpoints.issue(issue.id))
         assert check_deleted.status_code == 404
 
 
 def test_get_nonexistent_issue(youtrack_client):
     response = youtrack_client.get(
-        "api/issues/DEMO-999999",
+        YouTrackEndpoints.issue("DEMO-999999"),
     )
     assert response.status_code == 404
     error_data = response.json()
@@ -188,7 +236,9 @@ def test_get_nonexistent_issue(youtrack_client):
 
 
 def test_create_issue_without_summary(youtrack_client):
-    response = youtrack_client.post("/api/issues", json={"project": {"id": "0-0"}})
+    response = youtrack_client.post(
+        YouTrackEndpoints.ISSUES, json={"project": {"id": "0-0"}}
+    )
     assert response.status_code == 400
     error_data = response.json()
     assert error_data["error"] == "invalid_properties"
@@ -208,7 +258,8 @@ def test_create_issue_without_summary(youtrack_client):
 
 def test_unauthorized_request(youtrack_client):
     response = youtrack_client.get(
-        "/api/users/me", headers={"Authorization": "Bearer invalid-token"}
+        YouTrackEndpoints.CURRENT_USER,
+        headers={"Authorization": "Bearer invalid-token"},
     )
 
     assert response.status_code == 401
@@ -229,7 +280,7 @@ def test_unauthorized_request(youtrack_client):
 )
 def test_create_issue_invalid_project(youtrack_client, project_id):
     response = youtrack_client.post(
-        "/api/issues",
+        YouTrackEndpoints.ISSUES,
         json={
             "summary": "Invalid project test",
             "project": {
@@ -251,7 +302,7 @@ def test_add_empty_comment(youtrack_client):
     summary = f"API automation test {uuid4()}"
 
     response = youtrack_client.post(
-        "/api/issues",
+        YouTrackEndpoints.ISSUES,
         json={
             "summary": summary,
             "description": "Issue created using YouTrack REST API",
@@ -268,7 +319,7 @@ def test_add_empty_comment(youtrack_client):
         assert issue.summary == summary
 
         comments_before_response = youtrack_client.get(
-            f"/api/issues/{issue.id}/comments",
+            YouTrackEndpoints.issue_comments(issue.id),
             params={"fields": "id,text"},
         )
 
@@ -277,7 +328,7 @@ def test_add_empty_comment(youtrack_client):
         comments_before = comments_before_response.json()
 
         comment_response = youtrack_client.post(
-            f"/api/issues/{issue.id}/comments",
+            YouTrackEndpoints.issue_comments(issue.id),
             json={"text": ""},
             params={"fields": "id,text"},
         )
@@ -290,7 +341,7 @@ def test_add_empty_comment(youtrack_client):
         assert error_data["error_description"] == "Comment can't be empty."
 
         comments_after_response = youtrack_client.get(
-            f"/api/issues/{issue.id}/comments",
+            YouTrackEndpoints.issue_comments(issue.id),
             params={"fields": "id,text"},
         )
 
@@ -302,10 +353,10 @@ def test_add_empty_comment(youtrack_client):
         assert comments_after == comments_before
 
     finally:
-        delete_response = youtrack_client.delete(f"/api/issues/{issue.id}")
+        delete_response = youtrack_client.delete(YouTrackEndpoints.issue(issue.id))
 
         assert delete_response.status_code == 200
 
-        check_deleted = youtrack_client.get(f"/api/issues/{issue.id}")
+        check_deleted = youtrack_client.get(YouTrackEndpoints.issue(issue.id))
 
         assert check_deleted.status_code == 404

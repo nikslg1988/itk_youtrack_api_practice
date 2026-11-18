@@ -1,9 +1,12 @@
+from client.endpoints import YouTrackEndpoints
 from client.youtrack_client import YouTrackClient
 from schemas.user import UserMe
 
 
 def test_smoke(youtrack_client: YouTrackClient) -> None:
-    response = youtrack_client.get("/api/users/me", params={"fields": "id,login,name"})
+    response = youtrack_client.get(
+        YouTrackEndpoints.CURRENT_USER, params={"fields": "id,login,name"}
+    )
 
     assert response.status_code == 200
     user = UserMe.model_validate(response.json())
